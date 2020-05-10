@@ -1,3 +1,8 @@
 *.tar.gz
 *.zip
 *.db
+data
+data/
+data/*
+data/**
+*.csv
