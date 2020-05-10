@@ -1,0 +1,80 @@
+---
+version: "3.7"
+services:
+
+  app:
+    image: lucmichalski/news-dataset:latest
+    container_name: ${NAMESPACE}-app
+    ports:
+    - 9000:9000
+    networks:
+    - internal
+    - web
+    volumes:
+    - ${PWD}:/app
+    restart: unless-stopped
+    depends_on:
+    - mysql
+    - manticore
+    links:
+    - mysql:mysql
+    - manticore:manticore
+    command: ["go", "run", "medium.go", "--admin"]
+
+  mysql:
+    image: mysql:5.7
+    container_name: ${NAMESPACE}-db
+    ports:
+    - 3307:3307
+    volumes:
+    - db-data:/var/lib/mysql
+    networks:
+    - internal
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PORT: ${MYSQL_PORT}
+    restart: unless-stopped
+
+  manticore:
+    image: manticoresearch/manticore:latest
+    container_name: ${NAMESPACE}-manticore
+    ports:
+    - 9306:9306
+    - 9308:9308
+    - 9312:9312
+    volumes:
+    - mt-data:/var/lib/manticore    
+    networks:
+    - internal
+    restart: unless-stopped
+
+  backup:
+    image: zeenlym/mariadb-backup
+    container_name: ${NAMESPACE}-backup
+    depends_on:
+    - mysql
+    restart: unless-stopped
+    networks:
+    - internal
+    environment:
+    - TIMEZONE=${TIME_ZONE}
+    - SCHEDULE=0 0 0 3 *
+    - BACKUP_METHOD=mysqldump
+    - MYSQL_HOST=mysql
+    - MYSQL_DATABASE=${MYSQL_DATABASE}
+    - MYSQL_USER=${MYSQL_USER}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    volumes:
+    - ./backup:/backup
+
+networks:
+  internal:
+  web:
+    external: true
+
+volumes:
+  db-data:
+  mt-data:

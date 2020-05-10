@@ -10,30 +10,38 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
-	"github.com/qor/media"
-	"github.com/qor/validations"
-	"github.com/jinzhu/gorm"
-  	_ "github.com/mattn/go-sqlite3"
- 	"github.com/qor/admin"
+	"github.com/abadojack/whatlanggo"
 	"github.com/beevik/etree"
 	badger "github.com/dgraph-io/badger"
 	"github.com/gilliek/go-opml/opml"
+	"github.com/gin-gonic/gin"
 	"github.com/gocolly/colly/v2"
+	"github.com/gocolly/colly/v2/proxy"
 	"github.com/gocolly/colly/v2/queue"
 	"github.com/golang/snappy"
+	"github.com/jinzhu/gorm"
 	"github.com/k0kubun/pp"
-	"github.com/mmcdole/gofeed"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/nozzle/throttler"
 	cmap "github.com/orcaman/concurrent-map"
+	"github.com/qor/admin"
+	"github.com/qor/assetfs"
+	"github.com/qor/media"
+	"github.com/qor/qor/utils"
+	"github.com/qor/validations"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
-	"github.com/abadojack/whatlanggo"
+
+	padmin "github.com/lucmichalski/news-dataset/pkg/admin"
+	ccsv "github.com/lucmichalski/news-dataset/pkg/csv"
+	"github.com/lucmichalski/news-dataset/pkg/gofeed"
 )
 
 var (
@@ -45,58 +53,57 @@ var (
 	queueMaxSize   = 100000000
 	cachePath      = "./data/cache"
 	storagePath    = "./data/badger"
-	opmlFile       = "./sniperkit.opml"
 	sitemapRootURL = "https://medium.com/sitemap/sitemap.xml"
 )
 
 type feed struct {
-  	gorm.Model
-  	Title string
-  	Description string `gorm:"type:longtext;"`
-  	Link string `gorm:"size:255;unique"`
-	FeedLink string
-	Updated string
-	Published string
-  	AuthorName string
-  	AuthorEmail string	
-	Language string	
-  	ImageUrl string
-  	ImageTitle string
-	Copyright string
-	Generator string
-	DetectLang string 
+	gorm.Model
+	Title                string
+	Description          string `gorm:"type:longtext;"`
+	Link                 string `gorm:"size:255;unique"`
+	FeedLink             string
+	Updated              string
+	Published            string
+	AuthorName           string
+	AuthorEmail          string
+	Language             string
+	ImageUrl             string
+	ImageTitle           string
+	Copyright            string
+	Generator            string
+	DetectLang           string
 	DetectLangConfidence float64
-	Categories []category `gorm:"many2many:feed_categories;"`
-	CategoriesStr string
+	Categories           []category `gorm:"many2many:feed_categories;"`
+	CategoriesStr        string
 }
 
 type category struct {
-  	gorm.Model
+	gorm.Model
 	Name string
 }
 
 type article struct {
-  	gorm.Model
-  	Title        string
-  	Description string `gorm:"type:longtext;"`
-  	Content string
-  	Link string `gorm:"size:255;unique"`
-  	Updated string
-  	Published string
-  	AuthorName string
-  	AuthorEmail string
-  	Guid string
-  	ImageUrl string
-  	ImageTitle string
-	DetectLang string 
+	gorm.Model
+	Title                string
+	Description          string `gorm:"type:longtext;"`
+	Content              string
+	Link                 string `gorm:"size:255;unique"`
+	Updated              string
+	Published            string
+	AuthorName           string
+	AuthorEmail          string
+	Guid                 string
+	ImageUrl             string
+	ImageTitle           string
+	DetectLang           string
 	DetectLangConfidence float64
-  	Categories []category `gorm:"many2many:article_categories;"`
-	CategoriesStr string
-  	Enclosures string
+	Categories           []category `gorm:"many2many:article_categories;"`
+	CategoriesStr        string
+	Enclosures           string
 }
 
 func main() {
-	pflag.IntVarP(&parallelJobs, "parallel-jobs", "j", 1, "parallel jobs.")
+	pflag.IntVarP(&parallelJobs, "parallel-jobs", "j", 3, "parallel jobs.")
 	pflag.BoolVarP(&isAdmin, "admin", "a", false, "launch web admin.")
 	pflag.BoolVarP(&isVerbose, "verbose", "v", false, "verbose mode.")
 	pflag.BoolVarP(&isHelp, "help", "h", false, "help info.")
@@ -123,8 +130,21 @@ func main() {
 	DB.AutoMigrate(&article{})
 
 	if isAdmin {
-		// Initialize
-		Admin := admin.New(&admin.AdminConfig{DB: DB})
+		// Initialize AssetFS
+		AssetFS := assetfs.AssetFS().NameSpace("admin")
+
+		// Register custom paths to manually saved views
+		AssetFS.RegisterPath(filepath.Join(utils.AppRoot, "./templates/qor/admin/views"))
+		AssetFS.RegisterPath(filepath.Join(utils.AppRoot, "./templates/qor/media/views"))
+
+		// Initialize Admin
+		Admin := admin.New(&admin.AdminConfig{
+			SiteName: "News Dataset",
+			DB:       DB,
+			AssetFS:  AssetFS,
+		})
+
+		padmin.SetupDashboard(DB, Admin)
 
 		// Allow to use Admin to manage User, Product
 		Admin.AddResource(&article{})
@@ -137,12 +157,27 @@ func main() {
 		// Mount admin interface to mux
 		Admin.MountTo("/admin", mux)
 
+		router := gin.Default()
+		admin := router.Group("/admin", gin.BasicAuth(gin.Accounts{"news": "medium"}))
+		{
+			admin.Any("/*resources", gin.WrapH(mux))
+		}
+
+		router.Static("/public", "./public")
+
 		fmt.Println("Listening on: 9000")
-		http.ListenAndServe(":9000", mux)
+		s := &http.Server{
+			Addr:           ":9000",
+			Handler:        router,
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   10 * time.Second,
+			MaxHeaderBytes: 1 << 20,
+		}
+		s.ListenAndServe()
+		os.Exit(1)
 	}
 
-
-	csvSitemap, err := NewCsvWriter("medium_dataset.csv")
+	csvSitemap, err := ccsv.NewCsvWriter("medium_dataset.csv")
 	if err != nil {
 		panic("Could not open `csvSitemap.csv` for writing")
 	}
@@ -176,6 +211,9 @@ func main() {
 	// Instantiate default collector
 	c := colly.NewCollector(
 		//colly.UserAgent(uarand.GetRandom()),
+		// https://github.com/gocolly/colly/blob/master/_examples/random_delay/random_delay.go
+		// Attach a debugger to the collector
+		// colly.Debugger(&debug.LogDebugger{}),
 		colly.CacheDir(cachePath),
 		colly.URLFilters(
 			regexp.MustCompile("https://medium\\.com/sitemap/users/(.*)"),
@@ -183,7 +221,11 @@ func main() {
 		),
 	)
 
-	// sitemap/users/
+	rp, err := proxy.RoundRobinProxySwitcher("socks5://127.0.0.1:5566", "socks5://127.0.0.1:8119")
+	if err != nil {
+		log.Fatal(err)
+	}
+	c.SetProxyFunc(rp)
 
 	// create a request queue with 1 consumer thread
 	q, _ := queue.New(
@@ -219,6 +261,7 @@ func main() {
 	})
 
 	c.OnResponse(func(r *colly.Response) {
+		time.Sleep(1 * time.Second)
 		if isVerbose {
 			fmt.Println("OnResponse from", r.Ctx.Get("url"))
 		}
@@ -260,8 +303,6 @@ func main() {
 	// Consume URLs
 	q.Run(c)
 
-	// curl -H "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" https://www.leboncoin.fr/sitemap_index.xml
-
 	log.Println("Collected cmap: ", m.Count(), "users")
 
 	time.Sleep(10 * time.Second)
@@ -282,21 +323,21 @@ func main() {
 				log.Warn(err)
 				return err
 			}
-	
+
 			f := &feed{
-			  	Title: fee.Title,
-			  	Description: fee.Description,
-			  	Link: fee.Link,
-				FeedLink: fee.FeedLink,
-				Updated: fee.Updated,
-				Published: fee.Published, 
-				AuthorName:	fee.Author.Name,
+				Title:       fee.Title,
+				Description: fee.Description,
+				Link:        fee.Link,
+				FeedLink:    fee.FeedLink,
+				Updated:     fee.Updated,
+				Published:   fee.Published,
+				AuthorName:  fee.Author.Name,
 				AuthorEmail: fee.Author.Email,
-				Language: fee.Language,	
-				ImageTitle: fee.Image.Title,
-				ImageUrl: fee.Image.URL,
-				Copyright: fee.Copyright,
-				Generator: fee.Generator,
+				Language:    fee.Language,
+				ImageTitle:  fee.Image.Title,
+				ImageUrl:    fee.Image.URL,
+				Copyright:   fee.Copyright,
+				Generator:   fee.Generator,
 			}
 
 			// categories
@@ -329,18 +370,18 @@ func main() {
 			for _, item := range fee.Items {
 
 				a := &article{
-					Title: item.Title,
+					Title:       item.Title,
 					Description: item.Description,
-					Content: item.Content,
-					Link: item.Link,
-					Updated: item.Updated,
-					Published: item.Published,
-					Guid: item.GUID,
-					// Enclosures: item.Enclosures,					
+					Content:     item.Content,
+					Link:        item.Link,
+					Updated:     item.Updated,
+					Published:   item.Published,
+					Guid:        item.GUID,
+					// Enclosures: item.Enclosures,
 				}
 
 				if item.Author != nil {
-					a.AuthorName =  item.Author.Name
+					a.AuthorName = item.Author.Name
 					a.AuthorEmail = item.Author.Email
 				}
 
@@ -615,4 +656,3 @@ func ensureDir(path string) error {
 	d.Close()
 	return nil
 }
-

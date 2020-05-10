@@ -8,7 +8,7 @@ import (
 
 	"github.com/gilliek/go-opml/opml"
 	"github.com/k0kubun/pp"
-	"github.com/mmcdole/gofeed"
+	"github.com/lucmichalski/news-dataset/pkg/gofeed"
 	"github.com/nozzle/throttler"
 	log "github.com/sirupsen/logrus"
 )

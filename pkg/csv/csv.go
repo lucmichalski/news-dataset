@@ -1,4 +1,4 @@
-package main
+package ccsv
 
 import (
 	"encoding/csv"
@@ -55,3 +55,4 @@ func (w *CsvWriter) Close() error {
 	}
 	return w.file.Close()
 }
+

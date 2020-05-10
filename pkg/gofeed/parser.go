@@ -7,10 +7,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
-	"github.com/mmcdole/gofeed/atom"
-	"github.com/mmcdole/gofeed/rss"
+	"golang.org/x/net/proxy"
+
+	"github.com/lucmichalski/news-dataset/pkg/gofeed/atom"
+	"github.com/lucmichalski/news-dataset/pkg/gofeed/rss"
+)
+
+const (
+	torProxyAddress   = "socks5://51.91.21.67:5566"
+	torPrivoxyAddress = "socks5://51.91.21.67:8119"
 )
 
 // ErrFeedTypeNotDetected is returned when the detection system can not figure
@@ -85,6 +94,22 @@ func (f *Parser) ParseURL(feedURL string) (feed *Feed, err error) {
 // Request could be canceled or timeout via given context
 func (f *Parser) ParseURLWithContext(feedURL string, ctx context.Context) (feed *Feed, err error) {
 	client := f.httpClient()
+
+	client.Timeout = 40 * time.Second
+
+	tbProxyURL, err := url.Parse(torProxyAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	tbDialer, err := proxy.FromURL(tbProxyURL, proxy.Direct)
+	if err != nil {
+		return nil, err
+	}
+	tbTransport := &http.Transport{
+		Dial: tbDialer.Dial,
+	}
+	client.Transport = tbTransport
 
 	req, err := http.NewRequest("GET", feedURL, nil)
 	if err != nil {
