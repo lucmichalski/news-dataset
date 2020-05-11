@@ -107,7 +107,7 @@ services:
     - MYSQL_USER=${ND_MYSQL_USER}
     - MYSQL_PASSWORD=${ND_MYSQL_PASSWORD}
     volumes:
-    - ./backup:/backup
+    - ./shared/backup:/backup
 
 networks:
   internal:
