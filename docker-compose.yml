@@ -50,6 +50,25 @@ services:
       MYSQL_PORT: ${ND_MYSQL_PORT}
     restart: unless-stopped
 
+  tor-haproxy:
+    restart: always
+    container_name: ${NAMESPACE}-tor-haproxy
+    image: lucmichalski/tor-haproxy:latest
+    build:
+      context: .docker/tor-haproxy
+      dockerfile: Dockerfile
+    environment:
+    - privoxy=1
+    - privoxy_port=8119
+    - tors=25
+    networks:
+    - internal
+    - web
+    ports:
+    - 5566:5566
+    - 2090:2090
+    - 8119:8119
+
   manticore:
     image: manticoresearch/manticore:latest
     container_name: ${NAMESPACE}-manticore
