@@ -28,6 +28,7 @@ import (
 	"github.com/golang/snappy"
 	"github.com/jinzhu/gorm"
 	"github.com/k0kubun/pp"
+        _ "github.com/jinzhu/gorm/dialects/mysql"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/nozzle/throttler"
 	cmap "github.com/orcaman/concurrent-map"
@@ -113,9 +114,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// pp.Println(fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4,utf8&parseTime=True", os.Getenv("ND_MYSQL_USER"), os.Getenv("ND_MYSQL_PASSWORD"), os.Getenv("ND_MYSQL_HOST"), os.Getenv("ND_MYSQL_PORT"), "dataset_news"))
+
 	// Instanciate the mysql client
 	DB, err := gorm.Open("sqlite3", "medium.db")
-	// DB, err := gorm.Open("mysql", fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4,utf8&parseTime=True", os.Getenv("PI_MYSQL_USER"), os.Getenv("PI_MYSQL_PASSWORD"), os.Getenv("PI_MYSQL_HOST"), os.Getenv("PI_MYSQL_PORT"), "dataset_news"))
+	// DB, err := gorm.Open("mysql", fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4,utf8&parseTime=True", os.Getenv("ND_MYSQL_USER"), os.Getenv("ND_MYSQL_PASSWORD"), os.Getenv("ND_MYSQL_HOST"), os.Getenv("ND_MYSQL_PORT"), "dataset_news"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -307,7 +310,7 @@ func main() {
 
 	time.Sleep(10 * time.Second)
 
-	t := throttler.New(3, m.Count())
+	t := throttler.New(6, m.Count())
 
 	m.IterCb(func(key string, v interface{}) {
 

@@ -5,6 +5,9 @@ services:
   app:
     image: lucmichalski/news-dataset:latest
     container_name: ${NAMESPACE}-app
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
     - 9000:9000
     networks:
@@ -13,6 +16,13 @@ services:
     volumes:
     - ${PWD}:/app
     restart: unless-stopped
+    environment:
+      ND_MYSQL_DATABASE: ${ND_MYSQL_DATABASE}
+      ND_MYSQL_PASSWORD: ${ND_MYSQL_PASSWORD}
+      ND_MYSQL_ROOT_PASSWORD: ${ND_MYSQL_ROOT_PASSWORD}
+      ND_MYSQL_USER: ${ND_MYSQL_USER}
+      ND_MYSQL_PORT: ${ND_MYSQL_PORT}
+      ND_MYSQL_HOST: ${ND_MYSQL_HOST}
     depends_on:
     - mysql
     - manticore
@@ -23,19 +33,21 @@ services:
 
   mysql:
     image: mysql:5.7
-    container_name: ${NAMESPACE}-db
-    ports:
-    - 3307:3307
+    container_name: ${NAMESPACE}-mysql
+    expose:
+    - 3306
+    #ports:
+    #- 3307:3307
     volumes:
     - db-data:/var/lib/mysql
     networks:
     - internal
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PORT: ${MYSQL_PORT}
+      MYSQL_DATABASE: ${ND_MYSQL_DATABASE}
+      MYSQL_PASSWORD: ${ND_MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${ND_MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${ND_MYSQL_USER}
+      MYSQL_PORT: ${ND_MYSQL_PORT}
     restart: unless-stopped
 
   manticore:
@@ -72,9 +84,9 @@ services:
     - SCHEDULE=0 0 0 3 *
     - BACKUP_METHOD=mysqldump
     - MYSQL_HOST=mysql
-    - MYSQL_DATABASE=${MYSQL_DATABASE}
-    - MYSQL_USER=${MYSQL_USER}
-    - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    - MYSQL_DATABASE=${ND_MYSQL_DATABASE}
+    - MYSQL_USER=${ND_MYSQL_USER}
+    - MYSQL_PASSWORD=${ND_MYSQL_PASSWORD}
     volumes:
     - ./backup:/backup
 

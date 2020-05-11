@@ -1,3 +1,11 @@
+.git
+.git/
+.git/*
+.git/**
+backup
+backup/
+backup/*
+backup/**
 *.tar.gz
 *.zip
 *.db
