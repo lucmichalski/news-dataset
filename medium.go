@@ -27,8 +27,8 @@ import (
 	"github.com/gocolly/colly/v2/queue"
 	"github.com/golang/snappy"
 	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/k0kubun/pp"
-        _ "github.com/jinzhu/gorm/dialects/mysql"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/nozzle/throttler"
 	cmap "github.com/orcaman/concurrent-map"
@@ -50,6 +50,7 @@ var (
 	isHelp         bool
 	isVerbose      bool
 	isAdmin        bool
+	isDataset      bool
 	parallelJobs   int
 	queueMaxSize   = 100000000
 	cachePath      = "./data/cache"
@@ -105,6 +106,7 @@ type article struct {
 
 func main() {
 	pflag.IntVarP(&parallelJobs, "parallel-jobs", "j", 3, "parallel jobs.")
+	pflag.BoolVarP(&isDataset, "dataset", "d", false, "dump dataset.")
 	pflag.BoolVarP(&isAdmin, "admin", "a", false, "launch web admin.")
 	pflag.BoolVarP(&isVerbose, "verbose", "v", false, "verbose mode.")
 	pflag.BoolVarP(&isHelp, "help", "h", false, "help info.")
@@ -132,6 +134,75 @@ func main() {
 	DB.AutoMigrate(&feed{})
 	DB.AutoMigrate(&article{})
 
+	if isDataset {
+
+		csvDataset, err := ccsv.NewCsvWriter("medium_dataset_refined.csv")
+		if err != nil {
+			panic("Could not open `dataset.txt` for writing")
+		}
+
+		// Flush pending writes and close file upon exit of Sitemap()
+		defer csvDataset.Close()
+
+		csvDataset.Write([]string{"name", "make", "model", "year", "image_path"})
+		csvDataset.Flush()
+
+		// Scan
+		type cnt struct {
+			Count int
+		}
+
+		type res struct {
+			Title                string
+			Description          string
+			Content              string
+			Link                 string
+			Updated              string
+			Published            string
+			AuthorName           string
+			AuthorEmail          string
+			Guid                 string
+			ImageUrl             string
+			ImageTitle           string
+			DetectLang           string
+			DetectLangConfidence float64
+			CategoriesStr        string
+		}
+
+		var count cnt
+		DB.Raw("select count(id) as count FROM articles WHERE categories_str!=''").Scan(&count)
+
+		// instanciate throttler
+		t := throttler.New(48, count.Count)
+
+		counter := 0
+		imgCounter := 0
+
+		var results []res
+		DB.Raw("select title, description, content, link, updated, published, author_name, author_email, guid, image_url, image_title, detect_lang, detect_lang_confidence, categories_str FROM articles WHERE categories_str!=''").Scan(&results)
+		for _, result := range results {
+
+			go func(r res) error {
+				defer t.Done(nil)
+				pp.Println(r)
+			}(result)
+
+			t.Throttle()
+
+		}
+
+		// throttler errors iteration
+		if t.Err() != nil {
+			// Loop through the errors to see the details
+			for i, err := range t.Errs() {
+				log.Printf("error #%d: %s", i, err)
+			}
+			log.Fatal(t.Err())
+		}
+
+		os.Exit(0)
+	}
+
 	if isAdmin {
 		// Initialize AssetFS
 		AssetFS := assetfs.AssetFS().NameSpace("admin")
@@ -150,7 +221,16 @@ func main() {
 		padmin.SetupDashboard(DB, Admin)
 
 		// Allow to use Admin to manage User, Product
-		Admin.AddResource(&article{})
+		article := Admin.AddResource(&article{})
+		article.Meta(&admin.Meta{
+			Name: "Description",
+			Type: "rich_editor",
+		})
+		article.Meta(&admin.Meta{
+			Name: "Content",
+			Type: "rich_editor",
+		})
+
 		Admin.AddResource(&category{})
 		Admin.AddResource(&feed{})
 

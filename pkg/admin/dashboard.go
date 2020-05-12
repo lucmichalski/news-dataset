@@ -2,7 +2,7 @@ package admin
 
 import (
 	"encoding/json"
-	"time"
+	// "time"
 
 	"github.com/jinzhu/gorm"
 	"github.com/jinzhu/now"
@@ -14,7 +14,7 @@ var DB *gorm.DB
 
 type Chart struct {
 	Total string
-	Date  time.Time
+	Date  string // time.Time
 }
 
 /*
