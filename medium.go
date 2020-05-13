@@ -185,6 +185,7 @@ func main() {
 			go func(r res) error {
 				defer t.Done(nil)
 				pp.Println(r)
+				return nil
 			}(result)
 
 			t.Throttle()
