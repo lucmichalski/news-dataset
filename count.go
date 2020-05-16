@@ -52,6 +52,7 @@ var (
 	isVerbose      bool
 	isAdmin        bool
 	isDataset      bool
+	isCount        bool
 	parallelJobs   int
 	queueMaxSize   = 100000000
 	cachePath      = "./data/cache"
@@ -105,9 +106,32 @@ type article struct {
 	Enclosures           string
 }
 
+// Scan
+type cnt struct {
+	Count int
+}
+
+type res struct {
+	Title                string
+	Description          string
+	Content              string
+	Link                 string
+	Updated              string
+	Published            string
+	AuthorName           string
+	AuthorEmail          string
+	Guid                 string
+	ImageUrl             string
+	ImageTitle           string
+	DetectLang           string
+	DetectLangConfidence float64
+	CategoriesStr        string
+}
+
 func main() {
 	pflag.IntVarP(&parallelJobs, "parallel-jobs", "j", 3, "parallel jobs.")
 	pflag.BoolVarP(&isDataset, "dataset", "d", false, "dump dataset.")
+	pflag.BoolVarP(&isCount, "count", "c", false, "count entries.")
 	pflag.BoolVarP(&isAdmin, "admin", "a", false, "launch web admin.")
 	pflag.BoolVarP(&isVerbose, "verbose", "v", false, "verbose mode.")
 	pflag.BoolVarP(&isHelp, "help", "h", false, "help info.")
@@ -135,9 +159,21 @@ func main() {
 	DB.AutoMigrate(&feed{})
 	DB.AutoMigrate(&article{})
 
+	if isCount {
+
+		var countArticles cnt
+		DB.Raw("select count(id) as count FROM articles WHERE categories_str!=''").Scan(&countArticles)
+		pp.Println("countArticles", countArticles)
+
+		var countCategories cnt
+		DB.Raw("select count(id) as count FROM categories").Scan(&countCategories)
+		pp.Println("countCategories", countCategories)
+		os.Exit(0)
+	}
+
 	if isDataset {
 
-		csvDataset, err := ccsv.NewCsvWriter("medium_dataset_tagged.csv", '\t')
+		csvDataset, err := ccsv.NewCsvWriter("medium_dataset_refined.csv", '\t')
 		if err != nil {
 			panic("Could not open `dataset.txt` for writing")
 		}
@@ -145,36 +181,14 @@ func main() {
 		// Flush pending writes and close file upon exit of Sitemap()
 		defer csvDataset.Close()
 
-		csvDataset.Write([]string{"title", "description", "content", "link", "updated", "published", "author_name", "author_email", "guid", "image_url", "image_title", "detect_lang", "detect_lang_confidence", "categories_str"})
+		csvDataset.Write([]string{"name", "make", "model", "year", "image_path"})
 		csvDataset.Flush()
 
-		// Scan
-		type cnt struct {
-			Count int
-		}
-
-		type res struct {
-			Title                string
-			Description          string
-			Content              string
-			Link                 string
-			Updated              string
-			Published            string
-			AuthorName           string
-			AuthorEmail          string
-			Guid                 string
-			ImageUrl             string
-			ImageTitle           string
-			DetectLang           string
-			DetectLangConfidence string
-			CategoriesStr        string
-		}
-
-		//var count cnt
-		//DB.Raw("select count(id) as count FROM articles WHERE categories_str!=''").Scan(&count)
+		var count cnt
+		DB.Raw("select count(id) as count FROM articles WHERE categories_str!=''").Scan(&count)
 
 		// instanciate throttler
-		t := throttler.New(12, 2000000)
+		t := throttler.New(48, count.Count)
 
 		// counter := 0
 		// imgCounter := 0
@@ -182,13 +196,13 @@ func main() {
 		var results []res
 		DB.Raw("select title, description, content, link, updated, published, author_name, author_email, guid, image_url, image_title, detect_lang, detect_lang_confidence, categories_str FROM articles WHERE categories_str!=''").Scan(&results)
 		for _, result := range results {
+
 			go func(r res) error {
 				defer t.Done(nil)
 				pp.Println(r)
-				csvDataset.Write([]string{r.Title, r.Description, r.Content, r.Link, r.Updated, r.Published, r.AuthorName, r.AuthorEmail, r.Guid, r.ImageUrl, r.ImageTitle, r.DetectLang, r.DetectLangConfidence, r.CategoriesStr})
-				csvDataset.Flush()
 				return nil
 			}(result)
+
 			t.Throttle()
 
 		}

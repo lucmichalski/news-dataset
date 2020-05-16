@@ -14,13 +14,22 @@ type CsvWriter struct {
 }
 
 // NewCsvWriter creates a CSV file and returns a CsvWriter
-func NewCsvWriter(fileName string) (*CsvWriter, error) {
-	csvFile, err := os.Create(fileName)
-	if err != nil {
-		return nil, err
+func NewCsvWriter(fileName string, comma rune) (*CsvWriter, error) {
+	// var err error
+	var csvFile *os.File
+	if _, err := os.Stat(fileName); !os.IsNotExist(err) {
+		csvFile, err = os.Open(fileName)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		csvFile, err = os.Create(fileName)
+		if err != nil {
+			return nil, err
+		}
 	}
 	w := csv.NewWriter(csvFile)
-	w.Comma = '\t'
+	w.Comma = comma // '\t'
 	return &CsvWriter{csvWriter: w, mutex: &sync.Mutex{}, file: csvFile}, nil
 }
 
@@ -55,4 +64,3 @@ func (w *CsvWriter) Close() error {
 	}
 	return w.file.Close()
 }
-
