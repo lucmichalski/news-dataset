@@ -23,6 +23,7 @@ import (
 	badger "github.com/dgraph-io/badger"
 	"github.com/gilliek/go-opml/opml"
 	"github.com/gin-gonic/gin"
+	"github.com/go-sql-driver/mysql"
 	"github.com/gocolly/colly/v2"
 	"github.com/gocolly/colly/v2/proxy"
 	"github.com/gocolly/colly/v2/queue"
@@ -52,6 +53,7 @@ var (
 	isVerbose      bool
 	isAdmin        bool
 	isDataset      bool
+	isLoadData     bool
 	parallelJobs   int
 	queueMaxSize   = 100000000
 	cachePath      = "./data/cache"
@@ -108,6 +110,7 @@ type article struct {
 func main() {
 	pflag.IntVarP(&parallelJobs, "parallel-jobs", "j", 3, "parallel jobs.")
 	pflag.BoolVarP(&isDataset, "dataset", "d", false, "dump dataset.")
+	pflag.BoolVarP(&isLoadData, "load", "l", false, "load data into file.")
 	pflag.BoolVarP(&isAdmin, "admin", "a", false, "launch web admin.")
 	pflag.BoolVarP(&isVerbose, "verbose", "v", false, "verbose mode.")
 	pflag.BoolVarP(&isHelp, "help", "h", false, "help info.")
@@ -120,8 +123,8 @@ func main() {
 	// pp.Println(fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4,utf8&parseTime=True", os.Getenv("ND_MYSQL_USER"), os.Getenv("ND_MYSQL_PASSWORD"), os.Getenv("ND_MYSQL_HOST"), os.Getenv("ND_MYSQL_PORT"), "dataset_news"))
 
 	// Instanciate the mysql client
-	DB, err := gorm.Open("sqlite3", "medium.db")
-	// DB, err := gorm.Open("mysql", fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4,utf8&parseTime=True", os.Getenv("ND_MYSQL_USER"), os.Getenv("ND_MYSQL_PASSWORD"), os.Getenv("ND_MYSQL_HOST"), os.Getenv("ND_MYSQL_PORT"), "dataset_news"))
+	// DB, err := gorm.Open("sqlite3", "medium.db")
+	DB, err := gorm.Open("mysql", fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4,utf8&parseTime=True", "root", "meganews", "localhost", "3307", "dataset_news"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -135,18 +138,65 @@ func main() {
 	DB.AutoMigrate(&feed{})
 	DB.AutoMigrate(&article{})
 
-	if isDataset {
+	if isLoadData {
 
-		csvDataset, err := ccsv.NewCsvWriter("medium_dataset_tagged.csv", '\t')
+		csvFile := "medium_dataset_articles.csv"
+		mysql.RegisterLocalFile(csvFile)
+		query := `LOAD DATA LOCAL INFILE '` + csvFile + `' INTO TABLE articles CHARACTER SET 'utf8mb4' FIELDS TERMINATED BY '\t' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES (title,description,content,link,updated,published,author_name,author_email,guid,image_url,image_title,detect_lang,detect_lang_confidence,categories_str) SET created_at = NOW(), updated_at = NOW();`
+		fmt.Println(query)
+		err := DB.Exec(query).Error
 		if err != nil {
-			panic("Could not open `dataset.txt` for writing")
+			log.Fatal(err)
 		}
 
-		// Flush pending writes and close file upon exit of Sitemap()
+		csvFile = "medium_dataset_categories.csv"
+		mysql.RegisterLocalFile(csvFile)
+		query = `LOAD DATA LOCAL INFILE '` + csvFile + `' INTO TABLE categories CHARACTER SET 'utf8mb4' FIELDS TERMINATED BY '\t' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES (name) SET created_at = NOW(), updated_at = NOW();`
+		fmt.Println(query)
+		err = DB.Exec(query).Error
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		csvFile = "medium_dataset_users.csv"
+		mysql.RegisterLocalFile(csvFile)
+		query = `LOAD DATA LOCAL INFILE '` + csvFile + `' INTO TABLE feeds CHARACTER SET 'utf8mb4' FIELDS TERMINATED BY '\t' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES (title,description,link,feed_link,updated,published,author_name,author_email,language,image_url,image_title,copyright,generator,detect_lang,detect_lang_confidence,categories_str) SET created_at = NOW(), updated_at = NOW();`
+		fmt.Println(query)
+		err = DB.Exec(query).Error
+		if err != nil {
+			log.Fatal(err)
+		}
+
+	}
+
+	if isDataset {
+
+		csvDataset, err := ccsv.NewCsvWriter("medium_dataset_articles.csv", '\t')
+		if err != nil {
+			panic("Could not open `medium_dataset_articles.csv` for writing")
+		}
 		defer csvDataset.Close()
 
 		csvDataset.Write([]string{"title", "description", "content", "link", "updated", "published", "author_name", "author_email", "guid", "image_url", "image_title", "detect_lang", "detect_lang_confidence", "categories_str"})
 		csvDataset.Flush()
+
+		csvCatDataset, err := ccsv.NewCsvWriter("medium_dataset_categories.csv", '\t')
+		if err != nil {
+			panic("Could not open `medium_dataset_categories.csv` for writing")
+		}
+		defer csvCatDataset.Close()
+
+		csvCatDataset.Write([]string{"name"})
+		csvCatDataset.Flush()
+
+		csvUserDataset, err := ccsv.NewCsvWriter("medium_dataset_users.csv", '\t')
+		if err != nil {
+			panic("Could not open `medium_dataset_users.csv` for writing")
+		}
+		defer csvUserDataset.Close()
+
+		csvUserDataset.Write([]string{"title", "description", "link", "feed_link", "updated", "published", "author_name", "author_email", "language", "image_url", "image_title", "copyright", "generator", "detect_lang", "detect_lang_confidence", "categories_str"})
+		csvUserDataset.Flush()
 
 		// Scan
 		type cnt struct {
@@ -170,27 +220,73 @@ func main() {
 			CategoriesStr        string
 		}
 
-		//var count cnt
-		//DB.Raw("select count(id) as count FROM articles WHERE categories_str!=''").Scan(&count)
+		type cat struct {
+			Name string
+		}
+
+		type user struct {
+			Title                string
+			Description          string
+			Link                 string
+			FeedLink             string
+			Updated              string
+			Published            string
+			AuthorName           string
+			AuthorEmail          string
+			Language             string
+			ImageUrl             string
+			ImageTitle           string
+			Copyright            string
+			Generator            string
+			DetectLang           string
+			DetectLangConfidence string
+			CategoriesStr        string
+		}
 
 		// instanciate throttler
-		t := throttler.New(12, 2000000)
-
-		// counter := 0
-		// imgCounter := 0
+		t := throttler.New(12, 20000000)
 
 		var results []res
-		DB.Raw("select title, description, content, link, updated, published, author_name, author_email, guid, image_url, image_title, detect_lang, detect_lang_confidence, categories_str FROM articles WHERE categories_str!=''").Scan(&results)
+		DB.Raw("select title, description, content, link, updated, published, author_name, author_email, guid, image_url, image_title, detect_lang, detect_lang_confidence, categories_str FROM articles").Scan(&results)
 		for _, result := range results {
 			go func(r res) error {
 				defer t.Done(nil)
-				pp.Println(r)
+
 				csvDataset.Write([]string{r.Title, r.Description, r.Content, r.Link, r.Updated, r.Published, r.AuthorName, r.AuthorEmail, r.Guid, r.ImageUrl, r.ImageTitle, r.DetectLang, r.DetectLangConfidence, r.CategoriesStr})
 				csvDataset.Flush()
 				return nil
 			}(result)
 			t.Throttle()
+		}
 
+		// categories
+		t = throttler.New(12, 20000000)
+		var catResults []cat
+		DB.Raw("select name FROM categories").Scan(&catResults)
+		for _, result := range catResults {
+			go func(c cat) error {
+				defer t.Done(nil)
+
+				csvCatDataset.Write([]string{c.Name})
+				csvCatDataset.Flush()
+				return nil
+			}(result)
+			t.Throttle()
+		}
+
+		// users
+		t = throttler.New(12, 20000000)
+		var userResults []user
+		DB.Raw("select title, description, link, feed_link, updated, published, author_name, author_email, language, image_url, image_title, copyright, generator, detect_lang, detect_lang_confidence, categories_str FROM feeds").Scan(&userResults)
+		for _, result := range userResults {
+			go func(c user) error {
+				defer t.Done(nil)
+
+				csvUserDataset.Write([]string{c.Title, c.Description, c.Link, c.FeedLink, c.Updated, c.Published, c.AuthorName, c.AuthorEmail, c.Language, c.ImageUrl, c.ImageTitle, c.Copyright, c.Generator, c.DetectLang, c.DetectLangConfidence, c.CategoriesStr})
+				csvUserDataset.Flush()
+				return nil
+			}(result)
+			t.Throttle()
 		}
 
 		// throttler errors iteration
