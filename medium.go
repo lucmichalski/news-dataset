@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -37,6 +38,7 @@ import (
 	"github.com/qor/admin"
 	"github.com/qor/assetfs"
 	"github.com/qor/media"
+	"github.com/qor/qor"
 	"github.com/qor/qor/utils"
 	"github.com/qor/validations"
 	log "github.com/sirupsen/logrus"
@@ -330,7 +332,19 @@ func main() {
 		})
 
 		Admin.AddResource(&category{})
-		Admin.AddResource(&feed{})
+
+		f := Admin.AddResource(&feed{})
+		f.Meta(&admin.Meta{Name: "ImageUrl", Valuer: func(record interface{}, context *qor.Context) interface{} {
+			if f, ok := record.(*feed); ok {
+				result := bytes.NewBufferString("")
+				tmpl, _ := template.New("").Parse("<img src='{{.image}}'></img>")
+				tmpl.Execute(result, map[string]string{"image": f.ImageUrl})
+				return template.HTML(result.String())
+			}
+			return ""
+		}})
+		f.IndexAttrs("ImageUrl", "AuthorName", "Title")
+		f.UseTheme("grid")
 
 		// initalize an HTTP request multiplexer
 		mux := http.NewServeMux()
